@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Disassemble a raw big-endian M32R image at an explicit load address.
+set -euo pipefail
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+OBJDUMP="$ROOT/toolchain/bin/m32r-elf-objdump"
+
+usage() {
+    printf 'Usage: %s INPUT.bin LOAD_ADDRESS [OUTPUT.dis]\n' "${0##*/}" >&2
+    exit 2
+}
+
+[[ $# -eq 2 || $# -eq 3 ]] || usage
+[[ -x "$OBJDUMP" ]] || {
+    printf 'Toolchain is not built; run %s/build.sh first.\n' "$ROOT" >&2
+    exit 1
+}
+
+input=$1
+base=$2
+[[ -f "$input" ]] || { printf 'Input does not exist: %s\n' "$input" >&2; exit 1; }
+
+args=(-D -b binary -m m32r -EB "--adjust-vma=$base" "$input")
+if [[ $# -eq 3 ]]; then
+    mkdir -p "$(dirname -- "$3")"
+    "$OBJDUMP" "${args[@]}" > "$3"
+else
+    "$OBJDUMP" "${args[@]}"
+fi
