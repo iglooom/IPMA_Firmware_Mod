@@ -215,22 +215,34 @@ BM5T: label='A.D.C._CRCst' start=0x00003000 end=0x00006C17
 F1FT: NO 'A.D.C._CRCst' label. Descriptor is 0xC bytes shorter:
       start @0x10 = 0x00902000   end @0x14 = 0x0090840C   CRC @0x18 = 0x340BC6D9
       declared span 0x640C == block length 0x640C (+1 pad)   -> field identification is sound
-      but NOT REPRODUCED.
 ```
 
 Both CV4T and BM5T verify with the stated algorithm and their declared span is
 `len-1` in each case (`0x4427` vs `0x4428`; `0x3C17` vs `0x3C18`).
 
-F1FT's CRC was **not** recovered. Swept: skip-4-bytes and zero-4-bytes at every
-even offset 0x00–0x80, every start offset 0x00–0x30, ends at
-`len`, `len-1`, `0x640C`, `0x640D`, and `0xFF` padding 0–7 bytes. No hit. The
-CV4T control was run through the same sweeper and reproduced correctly, so the
-sweeper is validated and the negative is meaningful. F1FT uses a different
-polynomial, seed, or a non-CRC accumulator.
+### UPDATE — F1FT integrity is now solved enough to patch (see `F1FT_speed_gates.md`)
 
-**Practical consequence:** a patch to the CV4T part is repairable — the
-BootNfo CRC algorithm is proven on that generation. Do not attempt a patch to
-the F1FT part; its integrity word cannot currently be recomputed.
+The earlier conclusion "do not patch F1FT" is **superseded**. F1FT uses a
+different, two-tier scheme, and the layer that a value edit actually invalidates
+is solved:
+
+* **Per-region hash (the operative layer).** The flat 28-row index at block
+  `0x8C` stores, per region, `~zlib.crc32(region) & 0xFFFFFFFF` — a standard
+  reflected CRC-32 (`0xEDB88320`, init `0xFFFFFFFF`) **without the final
+  XOR-out**. Verified reproducing **28/28** stored hashes, confirmed against the
+  app's CRC core `0x0A8B50` and the runtime validator `0x15D94`. This is
+  recomputable, so any edited region's hash can be repaired.
+* **`+0x18 = 0x340BC6D9` top word — still not reproduced** by any standard
+  CRC-32/CRC-32C over any contiguous span (exhaustive C sweeps, all-poly, GF(2)
+  init-solving; see `work/f1ft/crack*.c`). But it is **left unchanged** and
+  believed safe because every threshold edit lands inside a per-region-hashed
+  region, never in the metadata `[0..0xE24)` that `+0x18` covers, and no runtime
+  read of `+0x18` was found (it appears to be an OEM download-tool word). Must be
+  confirmed on the bench.
+
+**Practical consequence:** both CV4T and F1FT parts are now patchable. The F1FT
+patch tool is `work/patch_thresholds_f1ft.py`; the built, statically-verified
+artifact is `F1FT-14F398-AG_LKA40_LCA45.VBF`.
 
 ---
 

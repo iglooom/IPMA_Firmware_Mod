@@ -17,6 +17,7 @@ Vehicle: Ford C520 EU MY17, VIN `WF0AXXWPMAEL32600`, IPMA release 4.27.0.
 | Document | Contents |
 |---|---|
 | **[IPMA_speed_gates.md](IPMA_speed_gates.md)** | **The main result.** Where the thresholds live, the `[arm, band]` encoding, how they were found, what was refuted, the modification and its road validation. |
+| **[F1FT_speed_gates.md](F1FT_speed_gates.md)** | **The F1FT (4.93.06 / CSF2F0) patch.** Restructured flat 28-row index, the solved per-region `~crc32` integrity layer, where the LKA/LCA fields moved, and the still-open `+0x18` top word (left unchanged, believed download-tool-only). |
 | [IPMA_module.md](IPMA_module.md) | Processor (Renesas M32R / M32192), firmware set, memory map, BootNfo integrity descriptor, building the M32R toolchain. |
 | [IPMA_calibration_format.md](IPMA_calibration_format.md) | The self-describing calibration container: region index, element-size table, per-variant records, tag-based access, known field semantics. |
 | [IPMA_flashing.md](IPMA_flashing.md) | SecurityAccess secret and how it was recovered, the real OEM flash sequence, integrity repair order, recovery posture. |
@@ -68,7 +69,8 @@ Under `work/` (stdlib Python 3 only, no venv required):
 
 | Tool | Purpose | Self-tests |
 |---|---|---|
-| `patch_thresholds.py` | Edit the thresholds, repair all three integrity layers | 25 |
+| `patch_thresholds.py` | Edit the CV4T thresholds, repair all three integrity layers | 25 |
+| `patch_thresholds_f1ft.py` | Edit the F1FT thresholds, repair per-region `~crc32` + container CRCs | 17 |
 | `ipma_flash.py` | Flash a VBF over UDS; replays both captures as tests | 20 |
 | `ford_seckey_solve.py` | Recover a SecurityAccess secret from captured pairs | 15 |
 | `scan_hysteresis.py` | Locate thresholds by activate/deactivate signature | 5 |
@@ -165,8 +167,11 @@ Run it after editing any document or tool.
   reads the right offsets but from a RAM base that was not traced back to the
   tag resolver, and binutils cannot decode the M32R FPU opcodes. The
   behavioural proof is conclusive; the code proof is not complete.
-* **The F1FT BootNfo CRC** is unreproduced, so that generation cannot be
-  patched safely.
+* **The F1FT BootNfo `+0x18` top word** is unreproduced by any standard CRC.
+  It is left unchanged in the F1FT patch (which only edits per-region-hashed
+  regions, never the metadata it covers) and appears to be an OEM download-tool
+  word not read at runtime — but this must be confirmed on the bench before the
+  F1FT part is relied upon. See `F1FT_speed_gates.md` §4.
 * **Region tag `0x00000A00`** (`0x012C`..`0x1A84`, the largest) has no chunk
   entry and was never decomposed.
 

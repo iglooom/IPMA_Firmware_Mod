@@ -132,7 +132,7 @@ Verified:
 CV4T-14F398-AF  start 0x00003000 end 0x00007427  stored 0xCEDEF18D  MATCH
 CV4T-14F399-AF  start 0x00820000 end 0x0082132F  stored 0x31B60A17  MATCH
 BM5T-14F398-AG  start 0x00003000 end 0x00006C17  stored 0x2F9A9B6A  MATCH
-F1FT-14F398-AG  different descriptor layout — NOT SOLVED (see below)
+F1FT-14F398-AG  different two-tier scheme — per-region ~crc32 SOLVED (see below)
 ```
 
 `A.D.C.` = Advanced Driver-assistance Camera (the supplier's module family);
@@ -141,11 +141,19 @@ is an artefact — the leading `U` is byte `0x55`, the low byte of the
 `0xAA5AA555` magic immediately before the label.
 
 **F1FT exception.** The F1FT descriptor has no `A.D.C._CRCst` label and is
-0xC bytes shorter: start at `+0x10`, end at `+0x14`, CRC at `+0x18`. Field
-identification is sound (declared span `0x640C` equals the block length) but
-the CRC was **not reproduced** despite an exhaustive sweep of skip/zero modes,
-start offsets and end conventions — with the CV4T case passing through the same
-sweeper as a control. **Do not patch the F1FT part.**
+0xC bytes shorter: start at `+0x10`, end at `+0x14`, top word at `+0x18`. It
+also drops the CV4T whole-block CRC in favour of a **flat 28-row index at block
+`0x8C`** whose per-region hash is the operative integrity layer:
+
+```
+region_hash = ~zlib.crc32(region) & 0xFFFFFFFF   (CRC-32 without the final XOR)
+```
+
+Verified reproducing 28/28 stored hashes and confirmed against the app CRC core
+`0x0A8B50` and runtime validator `0x15D94`. The `+0x18` top word
+(`0x340BC6D9`) is still not reproduced by any standard CRC but is not read at
+runtime and covers only untouched metadata, so the F1FT part **is** patchable —
+see `F1FT_speed_gates.md`. (This supersedes the earlier "do not patch F1FT".)
 
 ---
 
