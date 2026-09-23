@@ -4,8 +4,8 @@
 in seconds, and it is directly patchable.** It is *not* a hard-coded firmware
 timer and not a PSCM behaviour.
 
-Applies to **CV4T-14F398-AF** (release 4.27.0, CSF265, the vehicle under study).
-F1FT is deliberately out of scope here — see §7.
+Applies to **CV4T-14F398-AF** (release 4.27.0, CSF265) and, since the port,
+**F1FT-14F398-AG** (release 4.93.06, CSF2F0) — see §7 for the F1FT offsets.
 
 ```
 Field     tag 30A01058  +0x178   big-endian float32, SECONDS
@@ -166,11 +166,70 @@ exactly as the speed-gate change was.
 
 ---
 
-## 7. F1FT
+## 7. F1FT — ported
 
-Out of scope by decision — CV4T first. The F1FT calibration is structurally
-different (flat 28-row index, per-region `~crc32`) and the corresponding field
-must be relocated within its `0x624` variant regions before the same edit can be
-made. `F1FT-14F398-AG` region 0 shows `+0x1F4 = 3.9`, aligning with the CV4T
-`30A01048 +0x174 = 3.9` sibling rather than with `tag58 +0x178 = 3.7`, so the
-offset needs deriving, not assuming.
+The F1FT calibration (`F1FT-14F398-AG`, 4.93.06, CSF2F0) is structurally
+different — flat 28-row index, per-region `~crc32`, load `0x902000` — but the
+hold field ports cleanly because F1FT preserves the CV4T *record-internal*
+layout. On CV4T the hold is `tag58 arm +0x178`; on F1FT the LKA gate lives in
+each `0x624` variant region as sub-record **B** with its arm at region `+0x334`
+(the copy that governs the engage transition — see `F1FT_speed_gates.md`), so:
+
+```
+Field       region +0x4AC   (= arm-B +0x334 + 0x178)   big-endian float32, SECONDS
+Re-arm      region +0x4B8   (= +0x334 + 0x184)          OEM 1.0
+Companion   region +0x4A8 = 120.0  (the CV4T +0x174 sibling — structural signature)
+OEM         region0/1 hold 3.7 ; regions 2-10 hold 6.0
+```
+
+**Confirmation the offset is right, not assumed:**
+
+* Whole-block scan for any float in `[3.60, 3.80]` returns exactly 4 hits — two
+  in region0/region1 at `+0x4AC`, two more in the *un-indexed* pre-index
+  records at block `+0x688`/`+0xCAC` (see below). All four are this field.
+* The `120.0` companion sits at `+0x4A8` (hold − 4) in every region, mirroring
+  CV4T's `+0x174` sibling exactly — a structural fingerprint a coincidence
+  cannot reproduce.
+* region0 (the live 64.6 variant) holds **3.7**, matching CV4T's live record.
+
+The earlier note that region0 `+0x1F4 = 3.9` "aligns with `tag48 +0x174`" was
+correct but pointed at the wrong sub-record: `+0x1F4` is **sub-record A**'s
+`+0x174` sibling (A arm `+0x080` + `0x174`), holding 3.9/0.1 — a *different*
+timer. The operative hold is B's, at `+0x4AC`.
+
+### Variant table is 13 records; only 11 are hashed
+
+The F1FT variant table is **13** records of stride `0x624`; the flat index
+hashes only the **11** from block `+0xE24` on. The two un-indexed records at
+bases `+0x1DC`/`+0x800` are the low-spec **59.6** km/h variants (bands 5.0/4.3
+— the CV4T rec0/rec1 pair), *not* the live 64.6 variant this vehicle runs.
+Following the speed-gate scope decision, the port patches only the **11 indexed
+regions** and leaves the 2 un-indexed gap records untouched — which also keeps
+every edit inside a `~crc32`-hashed region and preserves the `+0x18` safety
+argument (nothing lands in the un-hashed `[0..0xE24)` metadata).
+
+### Caveat on units/ceiling
+
+The F1FT marshaller was **not** independently re-traced. The field location and
+`seconds` semantics are established by the exact structural mirror of CV4T and
+by region0's 3.7. The `65.535 s` u16 ceiling is inherited from the CV4T
+`round(s*1000)` path and enforced by the tool; **12 s is far inside it
+regardless**, so the port is safe even if F1FT's exact marshalling differs.
+As with CV4T, confirm the effect on measured episode duration on the road.
+
+### How to patch (F1FT)
+
+```bash
+cd /home/gl/Projects/ford/IPMA/Research
+python3 work/patch_thresholds_f1ft.py --selftest
+
+# hold together with the speed gates (the usual combination)
+python3 work/patch_thresholds_f1ft.py --lka-arm 40 --lca-arm 45 --lka-hold 12 \
+        -o F1FT-14F398-AG_LKA40_LCA45_HOLD12.VBF
+```
+
+Built artifact `F1FT-14F398-AG_LKA40_LCA45_HOLD12.VBF`: `vbftool verify` OK,
+**131 changed bytes fully accounted** — 46 value floats (22 LKA arm A+B, 11
+LCA, 11 hold, 2 m/s) + 12 region hashes + header CRC-32 + block CRC-16, zero
+unexplained; `+0x18` unchanged. Reverting is a single flash of the untouched
+`OEM/F1FT-14F398-AG.VBF`.

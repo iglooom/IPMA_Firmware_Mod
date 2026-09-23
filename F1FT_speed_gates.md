@@ -53,10 +53,23 @@ constant — identical encoding to CV4T).
 
 | Gate | field offset within each `0x624` region | OEM value |
 |---|---|---|
-| **LKA arm**  | region `+0x080` | region0 = **64.6** km/h; regions 1–10 = 60.6 / 61.0 |
-| **LKA band** | region `+0x090` | 5.0 |
+| **LKA arm (A)** | region `+0x080` | region0 = **64.6** km/h; regions 1–10 = 60.6 / 61.0 |
+| **LKA band (A)** | region `+0x090` | 5.0 |
+| **LKA arm (B)** ⚠ | region `+0x334` | **same as A** (64.6 / 60.6 / 61.0) |
+| **LKA band (B)** | region `+0x344` | 5.0 |
 | **LCA arm**  | region `+0x598` | **80.0** km/h (all 11 regions) |
 | **LCA band** | region `+0x5A8` | 5.0 |
+
+> **⚠ The LKA gate is stored TWICE per region — this was the F1FT porting bug.**
+> Each `0x624` region carries two parallel arm/band sub-records: **A** at `+0x080`
+> `[arm, 37.04, 191, upper=119.5, band]` and **B** at `+0x334`
+> `[arm, 37.04, 173, upper=110.0, band]`. On the stock file both hold the same
+> arm (64.6/60.6/61.0). This is the F1FT hoist of the CV4T two-table pair
+> (`0x30A01048` + `0x30A01058`) into a single region — and the CV4T tool patched
+> **both** tables. The first F1FT port wrote only copy **A**; the bench result
+> was **engage unchanged at ~65 km/h, disengage dropped to ~40 km/h**. That
+> asymmetry pins the roles: **sub-record B (`+0x334`) governs the engage
+> transition**, A governs the drop-out. The tool now patches both.
 
 Region 0 is the high/LKA-equipped variant (its `64.6` matches the CV4T live
 variant). The runtime variant selector is unknown (same open question as CV4T),
@@ -156,9 +169,10 @@ python3 $T verify F1FT-14F398-AG_LKA40_LCA45.VBF
 python3 $T diff   OEM/F1FT-14F398-AG.VBF F1FT-14F398-AG_LKA40_LCA45.VBF
 ```
 
-The `40/45` build's diff is **80 in-block bytes, fully accounted**: 32 value-edit
-bytes (24 float sites) + 48 region-hash bytes (12 regions × 4) + the header
-file_checksum and block CRC-16 outside the block. **Zero unexplained bytes.**
+The `40/45` build's diff is **fully accounted**: value-edit bytes across 35
+float sites (22 LKA arm = 11×A `+0x080` + 11×B `+0x334`, 11 LCA `+0x598`, 2 m/s)
++ 12 region-hash words (12×4 bytes) + the header file_checksum and block CRC-16
+outside the block = **105 changed bytes, zero unexplained**.
 `+0x18` verified identical (`0x340BC6D9`).
 
 ---
