@@ -17,12 +17,14 @@ Vehicle: Ford C520 EU MY17, VIN `WF0AXXWPMAEL32600`, IPMA release 4.27.0.
 | Document | Contents |
 |---|---|
 | **[IPMA_speed_gates.md](IPMA_speed_gates.md)** | **The main result.** Where the thresholds live, the `[arm, band]` encoding, how they were found, what was refuted, the modification and its road validation. |
+| **[IPMA_LKA_hold_time.md](IPMA_LKA_hold_time.md)** | **The ~3.7 s LKA intervention cap** — located at `tag58 +0x178` (seconds), the marshaller/countdown chain in the app, the 65.535 s u16 ceiling, and how to patch it. |
 | **[F1FT_speed_gates.md](F1FT_speed_gates.md)** | **The F1FT (4.93.06 / CSF2F0) patch.** Restructured flat 28-row index, the solved per-region `~crc32` integrity layer, where the LKA/LCA fields moved, and the still-open `+0x18` top word (left unchanged, believed download-tool-only). |
 | [IPMA_module.md](IPMA_module.md) | Processor (Renesas M32R / M32192), firmware set, memory map, BootNfo integrity descriptor, building the M32R toolchain. |
 | [IPMA_calibration_format.md](IPMA_calibration_format.md) | The self-describing calibration container: region index, element-size table, per-variant records, tag-based access, known field semantics. |
 | [IPMA_flashing.md](IPMA_flashing.md) | SecurityAccess secret and how it was recovered, the real OEM flash sequence, integrity repair order, recovery posture. |
 | [CROSS_VERSION.md](CROSS_VERSION.md) | Detailed comparison across three OEM firmware generations (CV4T 4.27.0, BM5T 4.5.5, F1FT 4.93.06). |
 | [IPMA_config_and_flash_risk.md](IPMA_config_and_flash_risk.md) | Why the As-Built / UDS configuration route does **not** work (clean negative), and the original risk assessment. |
+| [EXE_integrity_monitor.md](EXE_integrity_monitor.md) | The **application (EXE)** four-layer integrity recipe — incl. the internal CRC-32C at `end-7` — and the runtime monitor that enforces it. |
 | [FLASH_RESULTS.md](FLASH_RESULTS.md) | Session log: secret recovery, wire-level flash verification, drive3 validation. |
 
 Superseded briefing documents kept for provenance: `BRIEF.md`,
@@ -69,8 +71,9 @@ Under `work/` (stdlib Python 3 only, no venv required):
 
 | Tool | Purpose | Self-tests |
 |---|---|---|
-| `patch_thresholds.py` | Edit the CV4T thresholds, repair all three integrity layers | 25 |
+| `patch_thresholds.py` | Edit the CV4T speed thresholds **and the LKA hold time**, repair all three integrity layers | 40+ |
 | `patch_thresholds_f1ft.py` | Edit the F1FT thresholds, repair per-region `~crc32` + container CRCs | 17 |
+| `patch_exe_integrity.py` | Re-seal a modified **application (EXE)** — all four layers, incl. the internal CRC-32C | 13 |
 | `ipma_flash.py` | Flash a VBF over UDS; replays both captures as tests | 20 |
 | `ford_seckey_solve.py` | Recover a SecurityAccess secret from captured pairs | 15 |
 | `scan_hysteresis.py` | Locate thresholds by activate/deactivate signature | 5 |
@@ -130,8 +133,12 @@ The decisive inputs were **on-vehicle measurements**:
   something no amount of static analysis had settled.
 
 Several confident intermediate conclusions were **wrong and later retracted**
-(mph units, per-feature records, "no FPU", a 3.7 s intervention timer). They
-are documented in `IPMA_speed_gates.md` §3 so they are not retried.
+(mph units, per-feature records, "no FPU"). They are documented in
+`IPMA_speed_gates.md` §3 so they are not retried.
+
+One *retraction* was itself wrong: the "3.7 s intervention timer" was dismissed
+on single-drive evidence, then found in the calibration after all
+(`tag58 +0x178`, seconds). See [`IPMA_LKA_hold_time.md`](IPMA_LKA_hold_time.md).
 
 ---
 

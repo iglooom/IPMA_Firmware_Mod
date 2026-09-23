@@ -116,10 +116,15 @@ The values are not unique in the block — `40.0` appears 18 times and `50.0`
   the exact ×3.6 match to the m/s table — they are speeds.
 * **"The km/h tables are mirrors of the m/s pair."** Refuted: they are
   `[arm, band]`, a different and more informative structure.
-* **"LKA interventions are capped by a ~3.7 s timer."** Refuted: durations
-  ranged 0.18–3.72 s, all 10 ended in the *speed-gate* state (7), and several
-  re-triggered within seconds. Duration tracks road curvature, as the driver
-  reported.
+* ~~**"LKA interventions are capped by a ~3.7 s timer."**~~ **This refutation
+  was itself wrong and is now withdrawn.** It was drawn from a single drive on
+  which interventions happened to end at the speed gate. Across five drives
+  (69 episodes) 53 pile up at 3.70–3.72 s with near-zero spread, and the
+  constant has since been located in the calibration: `tag 30A01058 +0x178 =
+  3.7`, in seconds, marshalled to milliseconds at app `0x0542D0` and counted
+  down at `0x058F20`. See [`IPMA_LKA_hold_time.md`](IPMA_LKA_hold_time.md).
+  Both things are true: interventions can end at the speed gate *and* a 3.7 s
+  cap exists.
 
 ---
 
