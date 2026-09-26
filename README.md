@@ -24,6 +24,7 @@ Vehicle: Ford C520 EU MY17, VIN `WF0AXXWPMAEL32600`, IPMA release 4.27.0.
 | [IPMA_flashing.md](IPMA_flashing.md) | SecurityAccess secret and how it was recovered, the real OEM flash sequence, integrity repair order, recovery posture. |
 | [CROSS_VERSION.md](CROSS_VERSION.md) | Detailed comparison across three OEM firmware generations (CV4T 4.27.0, BM5T 4.5.5, F1FT 4.93.06). |
 | [IPMA_config_and_flash_risk.md](IPMA_config_and_flash_risk.md) | Why the As-Built / UDS configuration route does **not** work (clean negative), and the original risk assessment. |
+| **[OEM/mk4/MK4_FEASIBILITY.md](OEM/mk4/MK4_FEASIBILITY.md)** | **Adopting the Focus mk4 (CGEA) IPMA on C1MCA — clean negative.** Different supplier/MCU/endianness, CAN FD vs classical, zero signal overlap, and the unsolved `0x0A5` checksums. Includes the solved Delphi `GISF` integrity scheme. |
 | [EXE_integrity_monitor.md](EXE_integrity_monitor.md) | The **application (EXE)** four-layer integrity recipe — incl. the internal CRC-32C at `end-7` — and the runtime monitor that enforces it. |
 | [FLASH_RESULTS.md](FLASH_RESULTS.md) | Session log: secret recovery, wire-level flash verification, drive3 validation. |
 

@@ -93,11 +93,39 @@ consecutive interventions; it does **not** extend a single intervention.
 
 ---
 
-## 3. The hard ceiling: 65.535 s
+## 3. Two ceilings — and the low one is the one that bites
+
+### 3a. Per-record range bound (the binding constraint)
+
+Each hold field has a **stored upper bound** next to it, and the module enforces
+it at runtime. Exceeding it produces a file that passes *every* checksum layer
+and still faults the IPMA.
+
+```
+CV4T   bound at hold+0x1C     all four records = 6.0 s
+F1FT   bound at region+0x4CC  regions 2-3 = 6.0 s ; regions 4-12 = 65.0 s
+```
+
+**This is what broke `F1FT-14F398-AG_LKA40_LCA45_HOLD12.VBF` on the vehicle.**
+Both patchers now refuse an out-of-bound `--lka-hold` and offer `--clamp-hold`
+to write `min(requested, bound)` per record. `verify()` reports violations as a
+fourth layer.
+
+Evidence it is a bound (not proven by tracing the consuming code):
+
+| Check | Result |
+|---|---|
+| Structural mirror | F1FT `+0x4C8/+0x4CC/+0x4D0` = `(4, 6, 30)` == CV4T `hold+0x18/+0x1C/+0x20` |
+| Tracks the knob | OEM hold 3.7 -> companion 6.0; OEM hold 6.0 -> companion 65.0 |
+| Cross-generation invariant | CV4T, BM5T, BK2T: **every** hold-like record satisfies `hold <= companion`, no OEM exception |
+| Discriminates the two builds | speed-gate-only build (no bounded field touched) flashed and ran fine; the 12 s build faulted |
+
+### 3b. The u16 marshalling ceiling: 65.535 s
 
 `round(seconds * 1000)` is stored with `sth` into a **u16**. Anything above
 **65.535 s** wraps and silently produces a *shorter* hold than OEM. The tool
-refuses such values rather than emitting a wrapping image.
+refuses such values rather than emitting a wrapping image. In practice 3a binds
+first almost everywhere.
 
 ---
 
@@ -112,7 +140,9 @@ python3 work/patch_thresholds.py --lka-hold 12 --dry-run
 
 # together with the speed gates (the usual combination)
 python3 work/patch_thresholds.py --lka-arm 40 --lca-arm 45 --lka-hold 12 \
-        -o CV4T-14F398-AF_LKA40_LCA45_HOLD12.VBF
+        --clamp-hold -o CV4T-14F398-AF_LKA40_LCA45_HOLD12.VBF
+# NOTE: on CV4T all four records are bounded at 6.0 s, so this writes 6.0,
+# NOT 12.0. Without --clamp-hold the tool refuses (see 3a).
 ```
 
 All four records are written, because the runtime variant selector is still
@@ -123,10 +153,10 @@ the required order: BootNfo CRC-32 → block CRC-16 → file CRC-32.
 
 ```
 vbftool verify   -> OK (1 blocks)
-vbftool diff     -> 12 clusters, 36 bytes, ALL accounted:
+vbftool diff     -> 12 clusters, 32 bytes, ALL accounted:
    0x003024  BootNfo CRC-32
-   0x005C1C / 0x005DBC / 0x005F5C / 0x0060FC   406ccccd -> 41400000
-                                               (3.7f -> 12.0f)   <- the hold
+   0x005C1C / 0x005DBC / 0x005F5C / 0x0060FC   406ccccd -> 40c00000
+                                               (3.7f -> 6.0f, clamped)
    remaining clusters are the speed-gate edits
 ```
 
@@ -164,6 +194,23 @@ Reverting is a single flash of the untouched `CV4T-14F398-AF.VBF`.
 episode duration must be confirmed with `la_monitor.py` + `analyse_drive.py`
 exactly as the speed-gate change was.
 
+### Flash history — one known failure
+
+| Build | Result |
+|---|---|
+| `F1FT-…_LKA40_LCA45.VBF` (gates only) | flashed, runs fine |
+| `F1FT-…_LKA40_LCA45_HOLD12.VBF` (flat 12.0 s) | **faulted inside the IPMA** — violated the `+0x4CC` bound in regions 2/3 |
+| same, rebuilt with `--clamp-hold` | built and verified clean; **not yet flashed** |
+
+The failing build passed `vbftool verify`, all 30 region hashes and the block
+and file CRCs. Container validity is not sufficient — check the bounds.
+
+**Suggested positive control before trusting the bound theory.** Flash a build
+with `--lka-hold 6 --clamp-hold` (inside every region's bound, so it writes 6.0
+everywhere). If that runs clean where the flat 12 s build faulted, the bound is
+confirmed as the mechanism. Until then it rests on structural mirroring and the
+cross-generation invariant, not on a disassembly of the consuming code.
+
 ---
 
 ## 7. F1FT — ported
@@ -199,8 +246,11 @@ timer. The operative hold is B's, at `+0x4AC`.
 
 ### Variant table is 13 records; only 11 are hashed
 
-The F1FT variant table is **13** records of stride `0x624`; the flat index
-hashes only the **11** from block `+0xE24` on. The two un-indexed records at
+The F1FT variant table is **13** records of stride `0x624`. The flat index is
+**30 rows at block `0x74`** (an earlier note here said 28 rows at `0x8C` — that
+was wrong and made the patcher skip rows 0/1 entirely; harmless only because
+those two regions are also the ones it does not edit). Of the 13 variant
+records the tool patches the **11** from block `+0xE24` on. The two un-indexed records at
 bases `+0x1DC`/`+0x800` are the low-spec **59.6** km/h variants (bands 5.0/4.3
 — the CV4T rec0/rec1 pair), *not* the live 64.6 variant this vehicle runs.
 Following the speed-gate scope decision, the port patches only the **11 indexed
@@ -225,11 +275,14 @@ python3 work/patch_thresholds_f1ft.py --selftest
 
 # hold together with the speed gates (the usual combination)
 python3 work/patch_thresholds_f1ft.py --lka-arm 40 --lca-arm 45 --lka-hold 12 \
-        -o F1FT-14F398-AG_LKA40_LCA45_HOLD12.VBF
+        --clamp-hold -o F1FT-14F398-AG_LKA40_LCA45_HOLD12.VBF
+# regions 2-3 clamp to their 6.0 s bound; regions 4-12 take the full 12.0 s.
+# The live 64.6 km/h variant is region 2 -> 6.0 s, not 12.
 ```
 
-Built artifact `F1FT-14F398-AG_LKA40_LCA45_HOLD12.VBF`: `vbftool verify` OK,
-**131 changed bytes fully accounted** — 46 value floats (22 LKA arm A+B, 11
-LCA, 11 hold, 2 m/s) + 12 region hashes + header CRC-32 + block CRC-16, zero
-unexplained; `+0x18` unchanged. Reverting is a single flash of the untouched
+Built artifact `F1FT-14F398-AG_LKA40_LCA45_HOLD12.VBF` (rebuilt with
+`--clamp-hold`): `vbftool verify` OK, **119 changed bytes fully accounted** —
+value floats (22 LKA arm A+B, 11 LCA, 11 hold, 2 m/s) + 12 region hashes +
+header CRC-32 + block CRC-16, zero unexplained; `+0x18` unchanged; no region
+exceeds its `+0x4CC` bound. Reverting is a single flash of the untouched
 `OEM/F1FT-14F398-AG.VBF`.
