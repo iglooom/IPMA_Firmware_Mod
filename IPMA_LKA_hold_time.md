@@ -95,30 +95,40 @@ consecutive interventions; it does **not** extend a single intervention.
 
 ## 3. Two ceilings — and the low one is the one that bites
 
-### 3a. Per-record range bound (the binding constraint)
+### 3a. Per-record range bound (status: unproven, still enforced)
 
-Each hold field has a **stored upper bound** next to it, and the module enforces
-it at runtime. Exceeding it produces a file that passes *every* checksum layer
-and still faults the IPMA.
+Each hold field has a **stored companion** next to it that behaves like an upper
+bound, and the tool refuses or clamps against it.
 
 ```
 CV4T   bound at hold+0x1C     all four records = 6.0 s
 F1FT   bound at region+0x4CC  regions 2-3 = 6.0 s ; regions 4-12 = 65.0 s
 ```
 
-**This is what broke `F1FT-14F398-AG_LKA40_LCA45_HOLD12.VBF` on the vehicle.**
-Both patchers now refuse an out-of-bound `--lka-hold` and offer `--clamp-hold`
-to write `min(requested, bound)` per record. `verify()` reports violations as a
-fourth layer.
+> **RETRACTION.** This was previously stated as *"what broke
+> `F1FT-14F398-AG_LKA40_LCA45_HOLD12.VBF` on the vehicle"*. That is **withdrawn**.
+> The real cause of that fault was a stale `BootNfo +0x1C` metadata digest —
+> the gates-only build, which touches no bounded field, was built by the same
+> tool with the same stale digest and set the **same** `U2101-00` DTC. The bound
+> therefore never discriminated the two builds and is not supported by that
+> evidence. See [`F1FT_speed_gates.md`](F1FT_speed_gates.md) §4.
 
-Evidence it is a bound (not proven by tracing the consuming code):
+The structural evidence for it being a bound is unchanged and still worth
+respecting conservatively (clamping costs nothing), but it is **not** an
+observed failure:
 
 | Check | Result |
 |---|---|
 | Structural mirror | F1FT `+0x4C8/+0x4CC/+0x4D0` = `(4, 6, 30)` == CV4T `hold+0x18/+0x1C/+0x20` |
 | Tracks the knob | OEM hold 3.7 -> companion 6.0; OEM hold 6.0 -> companion 65.0 |
 | Cross-generation invariant | CV4T, BM5T, BK2T: **every** hold-like record satisfies `hold <= companion`, no OEM exception |
-| Discriminates the two builds | speed-gate-only build (no bounded field touched) flashed and ran fine; the 12 s build faulted |
+| ~~Discriminates the two builds~~ | **RETRACTED** — both builds carried the stale digest and both faulted |
+
+Both patchers refuse an out-of-bound `--lka-hold` and offer `--clamp-hold` to
+write `min(requested, bound)` per record; `verify()` reports violations as an
+extra layer. The positive control that would actually settle it is unchanged:
+flash a build with a hold set exactly **at** every record's bound (digest now
+correct) and compare against one deliberately over the bound.
 
 ### 3b. The u16 marshalling ceiling: 65.535 s
 
@@ -194,22 +204,24 @@ Reverting is a single flash of the untouched `CV4T-14F398-AF.VBF`.
 episode duration must be confirmed with `la_monitor.py` + `analyse_drive.py`
 exactly as the speed-gate change was.
 
-### Flash history — one known failure
+### Flash history — the U2101 fault, explained and fixed
 
 | Build | Result |
 |---|---|
-| `F1FT-…_LKA40_LCA45.VBF` (gates only) | flashed, runs fine |
-| `F1FT-…_LKA40_LCA45_HOLD12.VBF` (flat 12.0 s) | **faulted inside the IPMA** — violated the `+0x4CC` bound in regions 2/3 |
-| same, rebuilt with `--clamp-hold` | built and verified clean; **not yet flashed** |
+| `F1FT-…_LKA40_LCA45.VBF` (gates only, **old tool**) | flashed, then **`U2101-00` confirmedDTC** — stale `+0x1C` digest |
+| `F1FT-…_LKA40_LCA45_HOLD12.VBF` (**old tool**) | flashed, then **`U2101-00`** — same stale digest |
+| both, rebuilt with the digest-aware tool | built and verified clean; **not yet flashed** |
 
-The failing build passed `vbftool verify`, all 30 region hashes and the block
-and file CRCs. Container validity is not sufficient — check the bounds.
+An earlier version of this table recorded the gates-only build as "flashed, runs
+fine" and blamed the `+0x4CC` bound for the 12 s failure. Both are wrong: the
+gates-only build set the same DTC, and the common cause was the metadata digest.
+Container validity was never sufficient — but the missing layer was an integrity
+word, not a range check.
 
-**Suggested positive control before trusting the bound theory.** Flash a build
-with `--lka-hold 6 --clamp-hold` (inside every region's bound, so it writes 6.0
-everywhere). If that runs clean where the flat 12 s build faulted, the bound is
-confirmed as the mechanism. Until then it rests on structural mirroring and the
-cross-generation invariant, not on a disassembly of the consuming code.
+**Suggested positive control**, now that the digest is correct: flash
+`--lka-hold 6 --clamp-hold` (inside every region's bound). If that runs clean,
+the digest fix is confirmed *and* the bound is respected; a deliberately
+over-bound build is then the clean A/B for the bound itself.
 
 ---
 
@@ -281,8 +293,9 @@ python3 work/patch_thresholds_f1ft.py --lka-arm 40 --lca-arm 45 --lka-hold 12 \
 ```
 
 Built artifact `F1FT-14F398-AG_LKA40_LCA45_HOLD12.VBF` (rebuilt with
-`--clamp-hold`): `vbftool verify` OK, **119 changed bytes fully accounted** —
-value floats (22 LKA arm A+B, 11 LCA, 11 hold, 2 m/s) + 12 region hashes +
-header CRC-32 + block CRC-16, zero unexplained; `+0x18` unchanged; no region
-exceeds its `+0x4CC` bound. Reverting is a single flash of the untouched
-`OEM/F1FT-14F398-AG.VBF`.
+`--clamp-hold` **and the `+0x1C` metadata digest fix**): `vbftool verify` OK,
+**132 changed bytes fully accounted** — value floats (22 LKA arm A+B, 11 LCA,
+11 hold, 2 m/s) + region hashes + the `+0x1C` digest
+(`0xBFEB7F98 -> 0xA785BD89`) + header CRC-32 + block CRC-16, zero unexplained;
+`+0x18` algorithm tag unchanged; no region exceeds its `+0x4CC` bound. Reverting
+is a single flash of the untouched `OEM/F1FT-14F398-AG.VBF`.

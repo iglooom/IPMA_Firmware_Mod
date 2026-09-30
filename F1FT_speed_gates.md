@@ -5,13 +5,14 @@ Self-contained recipe for lowering the LKA and LCA activation speeds on the
 platform). This is the F1FT counterpart to the CV4T work in
 [`IPMA_speed_gates.md`](IPMA_speed_gates.md).
 
-> **Status: patched artifact built and statically verified; NOT yet bench/road
-> validated.** The two integrity layers that a value edit invalidates are
-> solved and recomputed. A third top-level word (`BootNfo +0x18`) is left
-> unchanged — see §4 for why that is believed safe and what must confirm it.
+> **Status: patched artifacts rebuilt after the U2101 root cause was found and
+> fixed.** The three integrity layers that a value edit invalidates are solved
+> and recomputed — including the `BootNfo +0x1C` metadata digest, whose omission
+> was what made the earlier builds latch `U2101-00` in the IPMA. See §4.
 
-Tool: [`work/patch_thresholds_f1ft.py`](work/patch_thresholds_f1ft.py) (17
-self-tests). Built artifact: `F1FT-14F398-AG_LKA40_LCA45.VBF`.
+Tool: [`work/patch_thresholds_f1ft.py`](work/patch_thresholds_f1ft.py) (43
+self-tests). Built artifacts: `F1FT-14F398-AG_LKA40_LCA45.VBF`,
+`F1FT-14F398-AG_LKA40_LCA45_HOLD12.VBF`.
 
 ---
 
@@ -26,22 +27,29 @@ BootNfo    descriptor at block offset 0 (shorter than CV4T, no A.D.C. label):
              +0x0C magic 0xAA5AA555
              +0x10 start 0x00902000
              +0x14 end   0x0090840C   (declared span 0x640C = block len − 1)
-             +0x18 top integrity word 0x340BC6D9   (see §4 — left unchanged)
+             +0x18 ALGORITHM TAG 0x340BC6D9 = ~crc32("123456789")  (fixed, §4)
+             +0x1C METADATA DIGEST 0xBFEB7F98                      (§4 — MUST be
+                   recomputed; leaving it stale sets U2101-00)
              +0x28 "CSF2F0"           (platform; CV4T = "CSF265")
 ```
 
 Unlike CV4T (tagged region index + element-size table), F1FT uses a **flat
-28-row index** at block offset `0x8C`, each row 12 bytes:
+30-row index** at block offset `0x74`, each row 12 bytes:
 
 ```
 [ block_offset : u32 BE ][ flags = 0x000C0100 : u32 ][ region_hash : u32 BE ]
 ```
 
-The 28 regions tile the block from row 0's offset (`0xE24`) to the declared end
-(`0x640C`). Region sizes: rows 0–10 are `0x624` per-variant blobs, row 11 is
-`0x35C`, rows 12–14 are `0x3F8`, rows 15–24 are small (`0x10`/`0x30`), rows
-25–27 are `0xC8`. The gap `[0..0xE24)` (descriptor + index + a pool of loose
-float parameters) is **not** covered by any region hash.
+(The earlier note "28 rows at `0x8C`" was wrong and made the patcher skip rows
+0/1. The row count is now derived by scanning the flags word, and `-AE`/`-AF`
+have 26 rows — never hard-code it.)
+
+The 30 regions tile the block from row 0's offset (`0x1DC`) to the declared end,
+the last region ending at `0x640C`. Region sizes: the eleven `0x624` per-variant
+blobs start at `0xE24`; earlier rows and rows 11+ are smaller records
+(`0x35C`, `0x3F8`, `0x10`/`0x30`, `0xC8`). Only `[0..0x1DC)` — the descriptor and
+the index itself — lies outside every region hash, and that gap is exactly what
+the `+0x1C` digest covers.
 
 ---
 
@@ -92,66 +100,133 @@ that survived the container rewrite.
 
 ---
 
-## 3. Integrity — two layers to repair, in this order
+## 3. Integrity — three layers to repair, in this order
 
 ### Layer 1 — per-region hash (**SOLVED**, the layer a value edit breaks)
 
-Each 28-row index entry stores a digest of its region:
+Each 30-row index entry stores a digest of its region:
 
 ```
 region_hash = ~zlib.crc32(region_bytes) & 0xFFFFFFFF
 ```
 
 i.e. a standard reflected CRC-32 (poly `0xEDB88320`, init `0xFFFFFFFF`) **without
-the final XOR-out**. Verified reproducing **28/28** stored hashes on the stock
+the final XOR-out**. Verified reproducing **30/30** stored hashes on the stock
 file. Confirmed against the firmware: the app's CRC-32 core at `0x0A8B50` takes
 the init in a register and the caller applies (or omits) the final `not`; the
 runtime calibration validator (`0x15D94` → streams each region) uses exactly
 this `~crc32` form. Repeated hash values in the stock index (rows 4≡5, 6≡8, 3≡9,
 12≡13≡14, 19–23) correspond to byte-identical regions — an independent check.
 
-### Layers 2 & 3 — container (handled by the VBF tooling)
+### Layer 2 — BootNfo `+0x1C` metadata digest (**SOLVED**, §4)
+
+```
+meta_digest = reflected CRC-32 (poly 0xEDB88320), init 0x3F81FACB, NO final XOR,
+              over block[0x20 : end_of_index]
+```
+
+It covers the whole region index, so **every layer-1 hash is inside its span** —
+recompute it *after* layer 1, never before. This is the layer the earlier builds
+missed; see §4 for how it was found and what it broke.
+
+### Layer 3 — container (handled by the VBF tooling)
 
 Per-block CRC-16/CCITT-FALSE, then header `file_checksum` CRC-32. Same as any
 VBF; `patch_thresholds_f1ft.py` recomputes both and `vbftool verify` confirms.
 
 ---
 
-## 4. The BootNfo `+0x18` top word — unsolved, left unchanged, believed safe
+## 4. The BootNfo `+0x18` / `+0x1C` pair — SOLVED (and the U2101 root cause)
 
-`+0x18 = 0x340BC6D9` is **not reproduced** by any standard CRC over any
-contiguous span. Exhausted (all under `work/f1ft/`):
+### What went wrong
 
-* reflected CRC-32 (`0xEDB88320`) over **every** `(start,end)` sub-range, whole
-  / crc-word-skipped / crc-word-zeroed, both endiannesses, init/xorout free —
-  zero hits (`crack_bootnfo.c`);
-* forward CRC-32 (`0x04C11DB7`) and CRC-32C (`0x82F63B78` — the app's second CRC
-  table) over all ranges — zero hits (`crack_c.c`);
-* a catalogue of 18 known 32-bit polynomials, then a partial all-65536-poly
-  sweep — only coincidental hits at random ranges (`crack2/3/4/5.c`);
-* GF(2) init-solving for every plausible span — every solved seed is
-  meaningless (not the length, address, part number, or a neighbour), so it is
-  **not** a seeded contiguous CRC;
-* hash-of-hashes / index-table encodings, digest truncations (MD5/SHA1/SHA256),
-  sum/xor accumulators, word-swapped and flash-size-padded variants — none.
+Both `F1FT-14F398-AG_LKA40_LCA45.VBF` and `..._HOLD12.VBF`, as built by the
+earlier tool, flashed successfully and then made the IPMA latch
 
-**Why the patch does not touch it and this is believed safe:**
+```
+U2101-00   raw E10100   status 0x08   [confirmedDTC]
+```
 
-1. Every edit this tool makes lands **inside a per-region-hashed region** (LKA/
-   LCA fields in the `0x624` regions; the m/s row in region 17). The metadata
-   gap `[0..0xE24)` — the only data `+0x18` can plausibly cover, since everything
-   else already has a region hash — is **not modified**, so the stored `+0x18`
-   stays consistent with what it protects.
-2. The app's runtime descriptor validator (`0x15D94`) checks the magic at
-   `+0x0C` and streams the per-region `~crc32` hashes; **no runtime read/compare
-   of `+0x18` was found**. This points to `+0x18` being an OEM download-tool
-   integrity word rather than a boot check.
+— `Control Module Configuration Incompatible` — which would not clear until an
+OEM calibration was flashed back. `U2101-00` is in the module's own DTC table at
+app `0xD9882` (`E1 01 00 FF 00 0F`), immediately after `U2100-00`, in the block
+of configuration/compatibility codes. The module accepted the *download* and
+then rejected the *dataset*.
 
-**This is an inference, not proof.** Before relying on the flash, confirm on the
-bench that the module accepts and runs the patched part through a soak cycle
-(delayed-integrity check), exactly as the CV4T part was validated. If the OEM
-tool or bootloader rejects it on `+0x18`, that word's algorithm must be read out
-of the SBL/download path before proceeding.
+Cause: the earlier tool left `BootNfo +0x1C` stale.
+
+```
+F1FT-14F398-AG_LKA40_LCA45.VBF        stored 0xBFEB7F98   correct 0xE2CA9AB1
+F1FT-14F398-AG_LKA40_LCA45_HOLD12.VBF stored 0xBFEB7F98   correct 0xA785BD89
+```
+
+Both builds carried the **OEM** digest while their region index had changed, so
+both faulted — which also retires the previous explanation. The
+`+0x4CC` hold-bound theory was blamed for the HOLD12 failure, but the gates-only
+build never touched a bounded field and failed **identically**, so the bound was
+never the discriminator. It is demoted to *unproven but still enforced by the
+tool* (conservative: the invariant `hold <= companion` holds across every OEM
+generation, and clamping costs nothing).
+
+### Why it was missed: `+0x18` is not a checksum at all
+
+`+0x18 = 0x340BC6D9` resisted every sweep — exhaustive `(start,end)` × poly ×
+init × xorout, CRC-32C, GF(2) init-solving, hash-of-hashes, digest truncations —
+because **there is no span to reproduce**:
+
+```
+0x340BC6D9 == ~zlib.crc32(b"123456789") & 0xFFFFFFFF
+```
+
+That is the CRC-32 **check value**, the standard algorithm self-test constant.
+It is a fixed *algorithm tag* declaring which CRC the container uses. Confirming
+evidence: it is byte-identical in F1FT `-AE`, `-AF` and `-AG` even though those
+are different datasets of different lengths, and a scan of every IPMA image on
+disk (CV4T, BM5T, BK2T, F1FT, JX7T, N1BT, LB5T, H1BT, all app/DSP/SBL/cal parts)
+finds the constant **only** at this one offset in the three F1FT calibrations.
+
+The real digest sits in the next word, `+0x1C`, which was never examined — and
+unlike `+0x18` it *does* vary per dataset:
+
+```
+F1FT-14F398-AE  +0x18 340BC6D9   +0x1C 17BEB5E8
+F1FT-14F398-AF  +0x18 340BC6D9   +0x1C 8FE36537
+F1FT-14F398-AG  +0x18 340BC6D9   +0x1C BFEB7F98
+```
+
+### How `+0x1C` was solved
+
+`-AE` and `-AF` are **the same length** (19277 B), which makes CRC linearity
+usable directly. For any CRC-32-shaped engine over a fixed span,
+`crc(A) ^ crc(B) = L(A ^ B)` with **init and xorout cancelling**, so the span
+must satisfy
+
+```
+crc_{init=0, no xorout}( (A^B)[start:end] )  ==  stored_A ^ stored_B
+```
+
+That single test eliminates init, xorout and endianness at once.
+[`work/f1ft/crack_w1c_linear.c`](work/f1ft/crack_w1c_linear.c) ran it over every
+`(start,end)` × three engines: **every surviving candidate ended at `0x1AC`** —
+exactly the end of the 26-row index. GF(2) init-solving on all three images then
+left one init consistent across all three, and only for `start == 0x20`:
+
+```
+init 0x3F81FACB  over [0x20 : end_of_index]  ->  AE 17BEB5E8  AF 8FE36537  AG BFEB7F98
+                                                 3/3 stock words reproduced
+```
+
+`start = 0x20` is the byte immediately after the digest slot, and the end is the
+end of the index — a self-consistent, structurally meaningful span, not a fitted
+coincidence. The AG file is an **independent confirmation**: it has 30 index
+rows, not 26, so its span length differs, yet the same init reproduces it.
+
+Honest bound on this result: the span/init were derived from the images, not
+from the verifier's disassembly. The claim that it *reproduces stock on 3/3 OEM
+datasets with a structurally meaningful span* is solid; the claim about which
+routine reads it is not traced. What promotes it past the earlier `+0x4CC`
+theory is that it explains **both** failed builds, including the one that
+touched no bounded field.
 
 ---
 
@@ -159,7 +234,7 @@ of the SBL/download path before proceeding.
 
 ```bash
 cd /home/gl/Projects/ford/IPMA/Research
-python3 work/patch_thresholds_f1ft.py --selftest            # 17 checks
+python3 work/patch_thresholds_f1ft.py --selftest            # 43 checks
 python3 work/patch_thresholds_f1ft.py --lka-arm 40 --lca-arm 45 --dry-run
 python3 work/patch_thresholds_f1ft.py --lka-arm 40 --lca-arm 45 \
         -o F1FT-14F398-AG_LKA40_LCA45.VBF
@@ -171,9 +246,15 @@ python3 $T diff   OEM/F1FT-14F398-AG.VBF F1FT-14F398-AG_LKA40_LCA45.VBF
 
 The `40/45` build's diff is **fully accounted**: value-edit bytes across 35
 float sites (22 LKA arm = 11×A `+0x080` + 11×B `+0x334`, 11 LCA `+0x598`, 2 m/s)
-+ 12 region-hash words (12×4 bytes) + the header file_checksum and block CRC-16
-outside the block = **105 changed bytes, zero unexplained**.
-`+0x18` verified identical (`0x340BC6D9`).
++ 12 region-hash words + the `+0x1C` metadata digest + the header file_checksum
+and block CRC-16 outside the block = **109 changed bytes, zero unexplained**.
+`+0x18` verified identical (`0x340BC6D9`); `+0x1C` recomputed
+`0xBFEB7F98 -> 0xE2CA9AB1`.
+
+Three self-tests guard the regression specifically: the `+0x1C` recipe must
+reproduce the stock word on **all three** OEM F1FT calibrations, the patched
+output's digest must differ from OEM, and `verify()` must *report* a
+deliberately-staled digest.
 
 ---
 
