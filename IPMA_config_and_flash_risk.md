@@ -14,7 +14,7 @@ exactly these writable configuration DIDs:
 | `DE02` | 15 B | feature-enable config block 3 (last 4 B ~always zero) | 706-03-0x |
 | `DE03` | 12 B | all zero in every sample seen | 706-04-0x |
 | `D700`/`D701` | 4 B | variant/HW descriptor (1 varying byte each) | — |
-| `FD05`/`FD06`/`FD07` | 16–20 B | IEEE-754 floats = **camera alignment/calibration** (yaw/pitch/roll) | — |
+| `FD05`/`FD06`/`FD07` | 16–20 B | IEEE-754 floats = **camera alignment/calibration** (yaw/pitch/roll) — FD05 layout now fully solved, see [IPMA_ucds_direct_config.md](IPMA_ucds_direct_config.md) | — |
 | `F1xx` | — | read-only part numbers (F110/F111/F113/F120/F124/F188/F18C) | — |
 
 Total writable config surface: **35 bytes** (DE00+DE01+DE02) plus alignment floats.

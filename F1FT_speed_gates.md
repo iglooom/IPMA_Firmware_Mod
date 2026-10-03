@@ -12,7 +12,9 @@ platform). This is the F1FT counterpart to the CV4T work in
 
 Tool: [`work/patch_thresholds_f1ft.py`](work/patch_thresholds_f1ft.py) (43
 self-tests). Built artifacts: `F1FT-14F398-AG_LKA40_LCA45.VBF`,
-`F1FT-14F398-AG_LKA40_LCA45_HOLD12.VBF`.
+`F1FT-14F398-AG_LKA40_LCA45_HOLD12.VBF`,
+`F1FT-14F398-AG_LKA35_LCA35_HOLD12.VBF` (both gates at 35 km/h,
+`+0x1C` digest `0xBFEB7F98 -> 0x92D57D69`, 132 changed bytes).
 
 ---
 

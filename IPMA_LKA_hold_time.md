@@ -299,3 +299,7 @@ Built artifact `F1FT-14F398-AG_LKA40_LCA45_HOLD12.VBF` (rebuilt with
 (`0xBFEB7F98 -> 0xA785BD89`) + header CRC-32 + block CRC-16, zero unexplained;
 `+0x18` algorithm tag unchanged; no region exceeds its `+0x4CC` bound. Reverting
 is a single flash of the untouched `OEM/F1FT-14F398-AG.VBF`.
+
+**Confirmed live on the car:** DID `FD22` ("Software Checksum") word 1 reads
+`0xA785BD89` — the HOLD12 build's `+0x1C` digest, not OEM `0xBFEB7F98`. See
+[IPMA_ucds_monitor_dids.md](IPMA_ucds_monitor_dids.md) §3.
